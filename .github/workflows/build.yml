@@ -1,0 +1,82 @@
+# Builds LocalASR.app on every push and pull request; a tag v* also publishes it as a GitHub Release.
+#
+# With no secrets the app is signed ad hoc and macOS quarantines the download (System Settings › Privacy & Security ›
+# Open Anyway). With these repository secrets it is signed with a Developer ID and notarized, and opens normally:
+#   MACOS_CERTIFICATE           base64 of the "Developer ID Application" certificate exported as .p12
+#   MACOS_CERTIFICATE_PASSWORD  that .p12's password
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD  an app-specific password from account.apple.com, for notarytool
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: macos-15
+    env:
+      SIGNED: ${{ secrets.MACOS_CERTIFICATE != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set the version from the tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${GITHUB_REF_NAME#v}" app/Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${GITHUB_RUN_NUMBER}" app/Resources/Info.plist
+
+      - name: Import the signing certificate
+        if: env.SIGNED == 'true'
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F'"' '/Developer ID Application/ {print $2; exit}')"
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          CODESIGN_IDENTITY: ${{ env.CODESIGN_IDENTITY || '-' }}
+        run: make app
+
+      - name: Notarize
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          ditto -c -k --keepParent dist/LocalASR.app "$RUNNER_TEMP/notarize.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/notarize.zip" --wait \
+            --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD"
+          xcrun stapler staple dist/LocalASR.app
+
+      - name: Zip
+        run: ditto -c -k --keepParent dist/LocalASR.app dist/LocalASR-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LocalASR-macos-arm64
+          path: dist/LocalASR-macos-arm64.zip
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/LocalASR-macos-arm64.zip --generate-notes

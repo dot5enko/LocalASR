@@ -1,0 +1,5 @@
+build/
+app/.build/
+dist/
+*.part
+.DS_Store

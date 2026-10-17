@@ -1,0 +1,3 @@
+[submodule "third_party/speech.cpp"]
+	path = third_party/speech.cpp
+	url = https://github.com/nyosegawa/speech.cpp
