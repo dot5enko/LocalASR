@@ -1,4 +1,5 @@
-# Builds LocalASR.app on every push and pull request; a tag v* also publishes it as a GitHub Release.
+# Builds LocalASR.app on every push and pull request. A push to main replaces the "nightly" pre-release with that
+# build; a tag v* (git tag v0.1.0 && git push origin v0.1.0) publishes it as a Release of its own.
 #
 # With no secrets the app is signed ad hoc and macOS quarantines the download (System Settings › Privacy & Security ›
 # Open Anyway). With these repository secrets it is signed with a Developer ID and notarized, and opens normally:
@@ -12,9 +13,15 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+# A newer push to the same branch cancels the build under way, so two nightlies never race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   app:
@@ -53,6 +60,8 @@ jobs:
       - name: Build
         env:
           CODESIGN_IDENTITY: ${{ env.CODESIGN_IDENTITY || '-' }}
+          # ggml would otherwise tune its CPU code to the runner's chip; the baseline is M1's (every Apple silicon Mac).
+          CMAKE_ARGS: -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.4-a+dotprod
         run: make app
 
       - name: Notarize
@@ -80,3 +89,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" dist/LocalASR-macos-arm64.zip --generate-notes
+
+      - name: Publish the nightly pre-release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly dist/LocalASR-macos-arm64.zip --prerelease --target "$GITHUB_SHA" \
+            --title "Nightly" --notes "Built from ${GITHUB_SHA::7} on main. Not a stable release."

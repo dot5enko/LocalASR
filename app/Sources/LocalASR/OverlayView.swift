@@ -8,7 +8,6 @@ final class OverlayModel: ObservableObject {
     @Published var phase: Phase = .connecting
     @Published var committed = ""
     @Published var live = ""
-    @Published var levels = [Float](repeating: 0, count: 36)
     @Published var hotKeyLabel = HotKey.default.label
     @Published var languagesLabel: String?
 
@@ -17,17 +16,32 @@ final class OverlayModel: ObservableObject {
     var onReset: () -> Void = {}
     var onHeightChange: (CGFloat) -> Void = { _ in }
 
-    var isEmpty: Bool { committed.isEmpty && live.isEmpty }
+    // Its own object, so a level tick redraws only the waveform, not the whole overlay.
+    let meter = LevelMeter()
 
-    func push(level: Float) {
-        levels.removeFirst()
-        levels.append(level)
-    }
+    var isEmpty: Bool { committed.isEmpty && live.isEmpty }
 
     func reset() {
         phase = .connecting
         committed = ""
         live = ""
+        meter.reset()
+    }
+}
+
+/// The recent microphone levels the waveform draws, newest last.
+@MainActor
+final class LevelMeter: ObservableObject {
+    @Published private(set) var levels = [Float](repeating: 0, count: 36)
+
+    func push(level: Float) {
+        var next = levels
+        next.removeFirst()
+        next.append(level)
+        levels = next
+    }
+
+    func reset() {
         levels = [Float](repeating: 0, count: levels.count)
     }
 }
@@ -41,8 +55,7 @@ struct OverlayView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
-                Waveform(levels: model.levels, active: model.phase == .listening)
-                    .frame(height: 28)
+                Waveform(meter: model.meter, active: model.phase == .listening)
                 status
                 Spacer(minLength: 8)
                 RoundButton(symbol: "xmark", tint: .secondary, help: "Cancel (Esc)", action: model.onCancel)
@@ -123,19 +136,28 @@ private struct TextHeightKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
+/// One bar per level, drawn in a single Canvas pass; each tick redraws once, with no animation running between ticks.
 private struct Waveform: View {
-    let levels: [Float]
+    @ObservedObject var meter: LevelMeter
     let active: Bool
 
+    private static let barWidth: CGFloat = 3
+    private static let spacing: CGFloat = 2.5
+    private static let height: CGFloat = 28
+
     var body: some View {
-        HStack(alignment: .center, spacing: 2.5) {
-            ForEach(levels.indices, id: \.self) { i in
-                Capsule()
-                    .fill(active ? Color.accentColor : Color.secondary.opacity(0.5))
-                    .frame(width: 3, height: 3 + CGFloat(levels[i]) * 25)
+        let levels = meter.levels
+        let width = CGFloat(levels.count) * Self.barWidth + CGFloat(max(levels.count - 1, 0)) * Self.spacing
+        Canvas { context, size in
+            let color = active ? Color.accentColor : Color.secondary.opacity(0.5)
+            for (i, level) in levels.enumerated() {
+                let barHeight = 3 + CGFloat(level) * 25
+                let rect = CGRect(x: CGFloat(i) * (Self.barWidth + Self.spacing), y: (size.height - barHeight) / 2,
+                                  width: Self.barWidth, height: barHeight)
+                context.fill(Capsule().path(in: rect), with: .color(color))
             }
         }
-        .animation(.linear(duration: 0.08), value: levels)
+        .frame(width: width, height: Self.height)
     }
 }
 

@@ -67,6 +67,9 @@ final class ServerProcess: ObservableObject {
     private var settings: [String: JSONValue] = [:]
     /// A launched asrd starts on the catalog's default model; the app's own goes to it once it answers.
     private var loadPending = false
+    /// Launches of an asrd that exited without answering. The first launch of a download can be stopped by
+    /// Gatekeeper until the user allows it, so a few more follow before the app gives up.
+    private var relaunches = 0
 
     /// Starts asrd and loads `model` with the runtime's load settings in it, or uses an asrd that already runs.
     func start(model: String?, settings: [String: JSONValue]) {
@@ -138,6 +141,7 @@ final class ServerProcess: ObservableObject {
 
     private func poll() async {
         if let health = await Self.health() {
+            if process != nil { relaunches = 0 }
             if loadPending, process != nil, let model {
                 loadPending = false
                 // Settings saved for another model or runtime do not keep the model from loading: it loads without them.
@@ -150,6 +154,11 @@ final class ServerProcess: ObservableObject {
             let status = health.status(external: process == nil)
             if self.status != status { self.status = status }
         } else if let process, !process.isRunning {
+            if relaunches < 5 {
+                relaunches += 1
+                launch()
+                return
+            }
             status = .failed("asrd exited (\(process.terminationStatus)); see ~/Library/Logs/LocalASR/asrd.log")
         } else if process == nil, status.reachable {
             // An external asrd went away; take over.

@@ -8,8 +8,9 @@ MODEL ?= qwen3-asr-0.6b
 models: server
 	build/asrd pull $(MODEL)
 
+# CMAKE_ARGS adds to the configuration: the release build passes a portable CPU baseline instead of this Mac's own.
 server:
-	cmake -B build -DCMAKE_BUILD_TYPE=Release
+	cmake -B build -DCMAKE_BUILD_TYPE=Release $(CMAKE_ARGS)
 	cmake --build build --target asrd asrd-feed -j
 
 app: server

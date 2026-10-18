@@ -95,12 +95,12 @@ final class DictationController {
         self.client = client
 
         let capture = AudioCapture()
-        let model = self.model
+        let meter = model.meter
         capture.onChunk = { [weak client] data in
             DispatchQueue.main.async { MainActor.assumeIsolated { client?.send(audio: data) } }
         }
         capture.onLevel = { level in
-            DispatchQueue.main.async { MainActor.assumeIsolated { model.push(level: level) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { meter.push(level: level) } }
         }
         do {
             try capture.start()
