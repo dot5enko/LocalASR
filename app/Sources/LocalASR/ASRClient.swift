@@ -18,8 +18,20 @@ final class ASRClient {
     private var pending: [Data] = []
     // Resets sent; partials the server made before the latest one are stale.
     private var epoch = 0
+    private var stopRequested = false
+    private var url: URL?
+    // asrd does not listen until its runtimes have started, which on a build's first run means compiling the Metal
+    // shaders (~20 s): until then the connection is tried again, and the audio waits in `pending`.
+    private var retryUntil = Date.distantPast
 
     func connect(url: URL) {
+        self.url = url
+        retryUntil = Date().addingTimeInterval(45)
+        open()
+    }
+
+    private func open() {
+        guard let url else { return }
         let task = URLSession.shared.webSocketTask(with: url)
         self.task = task
         task.resume()
@@ -48,6 +60,8 @@ final class ASRClient {
 
     /// Ends the audio; the final transcript follows as `.final`.
     func stop() {
+        stopRequested = true
+        guard ready else { return }
         task?.send(.string(#"{"type":"stop"}"#)) { _ in }
     }
 
@@ -69,6 +83,15 @@ final class ASRClient {
                 case .success:
                     self.receive(on: task)
                 case .failure(let error):
+                    if !self.ready, !self.finished, Date() < self.retryUntil {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                            MainActor.assumeIsolated {
+                                guard self.task === task, !self.finished else { return }
+                                self.open()
+                            }
+                        }
+                        return
+                    }
                     self.fail("Cannot reach asrd: \(error.localizedDescription)")
                 }
             }
@@ -84,6 +107,7 @@ final class ASRClient {
             ready = true
             for chunk in pending { task?.send(.data(chunk)) { _ in } }
             pending.removeAll()
+            if stopRequested { task?.send(.string(#"{"type":"stop"}"#)) { _ in } }
         case "partial":
             guard (object["epoch"] as? Int ?? 0) >= epoch else { return }
             onEvent?(.partial(committed: object["committed"] as? String ?? "", live: object["live"] as? String ?? ""))

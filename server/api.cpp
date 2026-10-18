@@ -4,8 +4,10 @@
 #include "hardware.h"
 #include "languages.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 namespace asrd {
 namespace {
@@ -69,7 +71,14 @@ std::string error_event(const std::string & message) {
 }
 
 void serve_dictation(Services & services, const httplib::Request & req, httplib::ws::WebSocket & ws) {
-    const std::shared_ptr<const Session> session = services.models.current();
+    std::shared_ptr<const Session> session = services.models.current();
+    // A dictation started while the model loads (the app's first, as asrd starts) waits for it; the client keeps the
+    // audio until `ready`.
+    for (int waited_ms = 0; !session && services.models.state() == ModelManager::State::loading && waited_ms < 60000;
+         waited_ms += 100) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        session = services.models.current();
+    }
     if (!session) {
         const ModelManager::State state = services.models.state();
         ws.send(error_event(state == ModelManager::State::loading

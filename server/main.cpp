@@ -204,7 +204,7 @@ int main(int argc, char ** argv) {
     asrd::Services services{registry, library, downloads, models, args.verbose};
     httplib::Server http;
     // Not httplib's SO_REUSEPORT: a second asrd would share the port and take some of the connections.
-    http.set_socket_options([](httplib::socket_t sock) {
+    http.set_socket_options([](socket_t sock) {
         int yes = 1;
         setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes);
     });

@@ -13,8 +13,7 @@ LocalASR.app (Swift, menu bar)                      asrd (C++, one process)
 
 ## Install
 
-Download `LocalASR-macos-arm64.zip` from the latest [GitHub Release](https://github.com/dot5enko/LocalASR/releases)
-(or the **Nightly** pre-release, built from `main`), unzip it and move `LocalASR.app` to
+Download `LocalASR-macos-arm64.zip` from the latest [GitHub Release](https://github.com/dot5enko/LocalASR/releases), unzip it and move `LocalASR.app` to
 /Applications. It needs macOS 14 or later on Apple silicon. If the release is not notarized, macOS refuses the first
 launch: open System Settings › Privacy & Security and click **Open Anyway** (or run
 `xattr -dr com.apple.quarantine /Applications/LocalASR.app`).
